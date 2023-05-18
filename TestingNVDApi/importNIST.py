@@ -7,8 +7,10 @@ import pandas
 import logging 
 from pprint import pprint
 import math
-from datetime import datetime,date 
+from datetime import datetime,date,timedelta 
 from SplunkIntegration import httpToSplunk,connectSplunk
+import math as m
+import array 
         
 class Vulnerability:
     def __init__(self,cve,cpeData,cweData,description,published_date,cvssDataV2, cvssDataV3):
@@ -201,6 +203,9 @@ def queryDateSearch(startYear,startMonth,endYear,endMonth, startIndex=0, pushToC
         pubStartDate=datetime(startYear,startMonth,1,0,0,0,0).isoformat()
         pubEndDate=datetime(endYear,endMonth,1,0,0,0,0).isoformat()
         print(f'Start date is {pubStartDate} and end date is {pubEndDate}')
+
+        #MAX ALLOWED DATE RANGE ACCORDING TO NIST IS 120 CONSECUTIVE DAYS, WRITE CODE HERE TO FORCE USER TO REQUEST THAT AMOUNT OR LESS
+        #ALSO WRITE CODE THAT ALLOWS FOR THE IMPLEMENTATION OF 'startDate' and 'duration' rather than specific year and month endpoints
         
         extraString=f'?pubStartDate={pubStartDate}&pubEndDate={pubEndDate}'
 
@@ -223,22 +228,88 @@ def queryDateSearch(startYear,startMonth,endYear,endMonth, startIndex=0, pushToC
         #pprint(response)
         print(f'length of response is {len(vulnerabilities)}')
         parseDesiredVulnData(vulnerabilities, pushToCSV, 'queryDateSearch1.csv')    
+        pandasDataFrame=rawJSONCollection(vulnerabilities)
+        return pandasDataFrame,vulnerabilities
+
+def fullDateRangeImport(startYear,startMonth,endYear,endMonth, startIndex=0):
+    if connectNIST():
+        pubStartDate=datetime(startYear,startMonth,1,0,0,0,0)
+        pubEndDate=datetime(endYear,endMonth,1,0,0,0,0)
+        timeDelta=pubEndDate-pubStartDate
+        reps=m.floor(timeDelta.days/120)
+
+        totalResults=[]
+        resultsPerPage=[]
+        fullUrl=[]
+        response=[]
+        data=[]
+        for i in range(0,reps):
+            print(i)
+            startDateIso=(pubStartDate+timedelta(days=120*i)).isoformat()
+            endDataISo=(pubStartDate+timedelta(days=120*(i+1))).isoformat()
+            print(f'Start date is {startDateIso} and end date is {endDataISo}')
+        
+            extraString=f'?pubStartDate={startDateIso}&pubEndDate={endDataISo}'
+
+            fullUrl.append(f'{urlBase}{extraString}')
+            print(fullUrl[i])
+            response.append(requests.get(fullUrl[i]).json())
+
+            print(f'Search starting at index 0')
+
+            totalResults.append(int(response[i]["totalResults"]))
+            resultsPerPage.append(int(response[i]["resultsPerPage"]))
+            vulnerabilities = response[i]['vulnerabilities']
+            data.append(vulnerabilities)
+
+            if totalResults>=resultsPerPage:
+                searchesNeeded=math.floor(totalResults[i]/resultsPerPage[i])
+                for j in range(0,searchesNeeded):
+                    extraString=f'?pubStartDate={startDateIso}&pubEndDate={endDataISo}&startIndex={2000*(j+1)}'
+                    print(f'Searching continuing at index {(j+1)*2000}')
+                    fullUrl.append(f'{urlBase}{extraString}')
+                    print(fullUrl[i])
+                    response.append(requests.get(fullUrl[i]).json())
+                    data.append(response)  
+
+        file = open('listtest.txt','w')
+        for vuln in data:
+            file.write(str(vuln)+"\n")
+        file.close()
+        return data 
+
+def rawJSONCollection (vulnerabilities):
+    data=[]
+    for i in vulnerabilities:
+        data.append(i['cve'])
+    pdDataFrame=pandas.DataFrame({'JSONList': data, 'rawVuln': vulnerabilities})
+    #pprint(str(pdDataFrame.at[2,'JSONList']))
+    return pdDataFrame
+
 
 def NISTDataIngest():
     pass
 
 if __name__ == '__main__':
     #queryCVEID('CVE-2019-1010218')
-    searchTest=queryKeywordSearch('Microsoft', exact=False, pushToCSV=False, CSVName='')
+    #searchTest=queryKeywordSearch('Microsoft', exact=False, pushToCSV=False, CSVName='')
     #print(datetime(2021,1,1,0,0,0,0).isoformat())
-    #queryDateSearch(2021,1,2021,3,startIndex=0,pushToCSV=True)
+
+    #dateSearchTest=queryDateSearch(2021,1,2021,3,startIndex=0,pushToCSV=True) 
+
     # print(f'Data from keyword search is {}')
-    testData=searchTest.iloc[3,0:7]
+    #testData=searchTest.iloc[3,0:7]
     # print(testData)
 
-    service = connectSplunk()
-    pandas.set_option("display.max_colwidth", 10000)
-    print(testData.to_string().replace(' ', '-:-').replace('-:-',' , '))
+    #service = connectSplunk()
+    #pandas.set_option("display.max_colwidth", 10000)
+    #print(testData.to_string().replace(' ', '-:-').replace('-:-',' , '))
     
     # httpToSplunk(service, data=testData.to_csv(sep=':'),indexName='devtestindex2',createIndex=True)
 
+    # pubStartDate=datetime(2021,2,1,0,0,0,0)
+    # pubEndDate=datetime(2021,6,1,0,0,0,0)
+    # timeDelta=pubEndDate-pubStartDate
+    # print(timeDelta)
+
+    fullDateRangeImport(2021,1,2022,1, startIndex=0)
